@@ -103,10 +103,41 @@ namespace io.github.mapepire_ibmi
         /**
         */
 
-        public static bool AllowCertificateCallback(object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors)
+        public static bool AllowCertificateCallback(object sender, X509Certificate? certificate, 
+        X509Chain? chain, SslPolicyErrors sslPolicyErrors)
         {
             return true;
         }
+
+public static RemoteCertificateValidationCallback CreateCustomRemoteCertificateValidationCallback(X509Certificate2Collection trustedRoots)
+{
+    if (trustedRoots == null)
+        throw new ArgumentNullException("trustedRoots is null");
+    if (trustedRoots.Count == 0)
+            throw new ArgumentException("trustedRoots have length 0");
+
+    X509Certificate2Collection roots = new X509Certificate2Collection(trustedRoots);
+    
+    return (sender, certificate, chain, policyErrors) =>
+    {
+        // Missing cert or the destination hostname wasn't valid for the cert.
+        if ((policyErrors & ~SslPolicyErrors.RemoteCertificateChainErrors) != 0)
+        {
+            return false;
+        }
+
+        for (int i = 1; i < chain.ChainElements.Count; i++)
+        {
+            chain.ChainPolicy.ExtraStore.Add(chain.ChainElements[i].Certificate);
+        }
+
+       
+        chain.ChainPolicy.CustomTrustStore.Clear();
+        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        chain.ChainPolicy.CustomTrustStore.AddRange(roots);
+        return chain.Build((X509Certificate2)certificate);
+    };
+}
         /**
          * Get a WebSocketClient instance which can be used to connect to the specified
          * DB2 server.
@@ -126,8 +157,15 @@ namespace io.github.mapepire_ibmi
             ws.Options.SetRequestHeader("Authorization", "Basic " + encodedAuth);
             if (db2Server.RejectUnauthorized == false)
             {
-
                 ws.Options.RemoteCertificateValidationCallback = new RemoteCertificateValidationCallback(AllowCertificateCallback);
+            } else {
+                if (db2Server.Ca != null) { 
+                    byte[] customRootCertificateData = Convert.FromBase64String(db2Server.Ca);
+                    X509Certificate2 customRootCertificate = new X509Certificate2(customRootCertificateData);
+                    X509Certificate2Collection customRootCertificates = new X509Certificate2Collection(customRootCertificate);
+                    ws.Options.RemoteCertificateValidationCallback = CreateCustomRemoteCertificateValidationCallback(customRootCertificates);
+
+                }
             }
             Task result = ws.ConnectAsync(uri, CancellationToken.None);
             result.Wait();
