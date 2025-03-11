@@ -1,6 +1,8 @@
 using System;
+using System.Diagnostics.Metrics;
 using io.github.mapepire_ibmi;
 using io.github.mapepire_ibmi.types;
+using Microsoft.Testing.Extensions.VSTestBridge;
 
 namespace UnitTests;
 
@@ -10,69 +12,74 @@ namespace UnitTests;
 public sealed class  TraceTest
 
 {
-    private int time;
-    private String? invalidQuery;
+  
+    static Object lockObject = new(); 
+    static DateTime startTime = DateTime.Now;
+    static int counter = startTime.Hour * 3600000 + startTime.Minute *60000+ startTime.Second *1000+ startTime.Millisecond; 
 
-    
     [TestInitialize]
     public void TestInitialize()
     {
-       time = 0x7fffffff & DateTime.Now.GetHashCode();
-       
-       invalidQuery = "SELECT * FROM SAMPLE."+time;
- 
+  
     }
 
     [TestCleanup]
     public void TestCleanup()
     {
   
-       DaemonServer daemonServer = MapepireTest.GetTestDaemonServer(); 
-        SqlJob job = new(); 
-		ConnectionResult? cr = job.Connect(daemonServer);
-        
-        job.SetTraceLevel(ServerTraceLevel.OFF);
-
-        job.Close();
-
   
     }
   
   
     [TestMethod]
     public void ServerTracingOff()  {
-        AssertTraceData(invalidQuery, ServerTraceLevel.OFF, false);
+       int counter =  getCounter();
+       String invalidQuery = "SELECT * FROM SAMPLE."+counter;
+       AssertTraceData(invalidQuery, counter, ServerTraceLevel.OFF, false);
     }
 
     [TestMethod]
     public void ServerTracingOn()  {
-        AssertTraceData(invalidQuery, ServerTraceLevel.ON, true);
+       int counter =  getCounter();
+       String invalidQuery = "SELECT * FROM SAMPLE."+counter;
+        AssertTraceData(invalidQuery, counter, ServerTraceLevel.ON, true);
     }
 
     [TestMethod]
     public void ErrorServerTracing()  {
-        AssertTraceData(invalidQuery, ServerTraceLevel.ERRORS, true);
+       int counter =  getCounter();
+       String invalidQuery = "SELECT * FROM SAMPLE."+counter;
+        AssertTraceData(invalidQuery, counter, ServerTraceLevel.ERRORS, true);
     }
 
+    public static int getCounter() { 
+        
+        lock(lockObject) { 
+            counter++; 
+        }
+        return counter; 
+    }
     [TestMethod]
     public void DataStreamServerTracing()  {
-        AssertTraceData(invalidQuery, ServerTraceLevel.DATASTREAM, true);
+       int counter =  getCounter();
+       string invalidQuery = "SELECT * FROM SAMPLE."+counter;
+        AssertTraceData(invalidQuery, counter, ServerTraceLevel.DATASTREAM, true);
     }
 
-    public void AssertTraceData(String? sql, ServerTraceLevel level, bool traceExists)  {
+    public void AssertTraceData(String? sql, int counter, ServerTraceLevel level, bool traceExists)  {
+        lock(lockObject) { 
         if (sql == null) throw new Exception("null sql string"); 
         DaemonServer daemonServer = MapepireTest.GetTestDaemonServer(); 
         SqlJob job = new(); 
 		ConnectionResult? cr = job.Connect(daemonServer);
      
-
         job.SetTraceLevel(level);
         Query query = job.Query(sql);
 
             try {
                 query.Execute(1);
             } catch (Exception ex) {
-                 String expectedMessage = "[SQL0104] Token ."+time+" was not valid. Valid tokens: FOR USE SKIP WAIT WITH FETCH LIMIT ORDER UNION EXCEPT.";
+                 String expectedMessage = "[SQL0104] Token ."+counter+" was not valid. Valid tokens: FOR USE SKIP WAIT WITH FETCH LIMIT ORDER UNION EXCEPT.";
                 Assert.AreEqual(expectedMessage, ex.Message);
             }
             query.Close(); 
@@ -80,19 +87,35 @@ public sealed class  TraceTest
 
         GetTraceDataResult result = job.GetTraceDataResult();
 
+        job.SetTraceLevel(ServerTraceLevel.OFF);
+        
         job.Close();
-
+        
         Assert.IsTrue(result.Success);
         Assert.IsNotNull(result.Id);
-
+        bool hasExceptionInTrace = result.TraceData
+                    .IndexOf("com.ibm.as400.access.AS400JDBCSQLSyntaxErrorException: [SQL0104] Token ." + counter) >= 0;
         if (traceExists) {
-            Assert.IsTrue(result.TraceData
-                    .IndexOf("com.ibm.as400.access.AS400JDBCSQLSyntaxErrorException: [SQL0104] Token ." + time) >= 0);
+            if (!hasExceptionInTrace) { 
+                Console.WriteLine("Trace does not have exception"); 
+                Console.WriteLine(result.TraceData); 
+            }
+            Assert.IsTrue(hasExceptionInTrace);
         } else {
-            Assert.IsFalse(result.TraceData
-                    .IndexOf("com.ibm.as400.access.AS400JDBCSQLSyntaxErrorException: [SQL0104] Token ." + time) >= 0);
+            if (hasExceptionInTrace) { 
+                Console.WriteLine("Trace has exception"); 
+                Console.WriteLine(result.TraceData); 
+            }
+            Assert.IsFalse(hasExceptionInTrace);
         }
-
+        /* Make sure the server is reset */ 
+        DaemonServer daemonServer2 = MapepireTest.GetTestDaemonServer(); 
+        SqlJob job2 = new(); 
+		ConnectionResult? cr2 = job2.Connect(daemonServer);
         
+        job2.SetTraceLevel(ServerTraceLevel.OFF);
+
+        job2.Close();
+        }
     }
 }
