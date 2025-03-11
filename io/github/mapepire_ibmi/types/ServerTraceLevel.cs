@@ -3,7 +3,7 @@ using System.Reflection.Metadata;
 
 namespace io.github.mapepire_ibmi.types {
 /**
- * Enum representing the possible server trace levels.
+ * Values representing the possible server trace levels.
  */
 public class ServerTraceLevel {
     /**
